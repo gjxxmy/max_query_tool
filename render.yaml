@@ -6,6 +6,7 @@ services:
     region: singapore
     repo: https://github.com/gjxxmy/max_query_tool
     branch: codex/initial-import
+    autoDeployTrigger: commit
     buildCommand: pip install -r requirements.txt
     startCommand: python server.py --cloud
     healthCheckPath: /health

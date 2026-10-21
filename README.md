@@ -2,7 +2,7 @@
 
 ## 公网部署
 
-已部署入口：[MAX 收入报表](https://max-query-tool.onrender.com/)。当前使用 Render Free，新加坡区域；后续推送代码后，在 Render 服务的 Deploys 页面手动部署最新提交（公开仓库 URL 模式未关联 GitHub 自动发布权限）。
+已部署入口：[MAX 收入报表](https://max-query-tool.onrender.com/)。当前使用 Render Free，新加坡区域。Render 已通过官方 GitHub 应用关联本仓库，仅授权 `gjxxmy/max_query_tool`，自动部署方式为 **On Commit**。以后向 `codex/initial-import` 分支推送提交，Render 会自动构建并部署，网址保持不变；本地提交但未推送不会触发，其他分支也不会更新此服务。发布结果可在 Render 服务的 Deploys 页面查看。
 
 仓库包含 `render.yaml`，可在 Render 使用 Blueprint 部署免费 Python Web Service。也可从公开仓库创建 Web Service：分支 `codex/initial-import`，构建命令 `pip install -r requirements.txt`，启动命令 `python server.py --cloud`，健康检查 `/health`，选择 Free 方案与 Singapore 区域。设置仅服务端可见的 `MAX_COOKIE_SECRET`（至少 32 个随机字符，保持不变）；Render 自动提供 `PORT` 和 `RENDER_EXTERNAL_HOSTNAME`。其他平台还需显式设置 `MAX_PUBLIC_HOST` 并使用 HTTPS 反向代理。
 
