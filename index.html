@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MAX · 收入报表</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="/" aria-label="MAX 收入报表首页"><span class="brand-icon">M</span> MAX <span class="brand-divider">/</span><span class="brand-label">收入报表</span></a><span class="local-badge"><i></i> 本地工具</span></header>
+  <main>
+    <section class="intro"><span class="eyebrow">MAX REVENUE REPORTS</span><h1>把广告收入，<br class="mobile-break">查清楚。</h1><p>选择应用与日期，查看展示与收益汇总，或下载用户级、逐次展示报表。</p></section>
+    <div class="workspace">
+      <section class="query-card" aria-labelledby="query-heading">
+        <div class="card-heading"><div><span class="step">01</span><h2 id="query-heading">查询条件</h2></div><span class="required-note">所有选项均需填写</span></div>
+        <form id="query-form">
+          <div class="field"><label for="key-profile">Report Key</label><select id="key-profile" disabled><option value="">正在读取已保存的账号…</option></select><div id="key-editor" hidden><div class="password-wrap"><input id="api-key" aria-label="输入 Report Key" name="report-key" type="password" autocomplete="off" spellcheck="false" placeholder="输入 AppLovin Report Key"><button type="button" id="toggle-key" aria-label="显示 Report Key" aria-pressed="false">显示</button></div><div class="save-key-row"><input id="profile-name" maxlength="50" aria-label="账号名称" placeholder="给这个 Key 起名，如：常用账号"><button type="button" id="save-key" class="secondary">保存并使用</button></div></div><small id="key-hint">填写一次并保存，之后直接选择。密钥保存到这台 Mac 的钥匙串。</small><p id="preferences-message" class="inline-message" role="status" hidden></p></div>
+          <div class="field"><label for="identifier">应用标识</label><div class="identifier-row"><select id="identifier-type" aria-label="应用标识类型"><option value="application">包名 / Bundle ID</option><option value="store_id">Store ID</option></select><input id="identifier" list="saved-apps" required maxlength="255" autocomplete="off" spellcheck="false" placeholder="输入或选择应用包名 / Bundle ID"></div><datalist id="saved-apps"></datalist><small id="identifier-hint">输入已记录的包名会自动选择平台；新包名请手动选一次。</small></div>
+          <div class="two-columns"><div class="field"><label for="platform">应用平台</label><select id="platform" required><option value="">请选择平台</option><option value="android">Android</option><option value="ios">iOS</option><option value="fireos">Fire OS</option></select><small id="platform-hint">首次查询成功后会记住包名和平台。</small></div><div class="field"><label for="date-scope">查询范围 <span class="label-note">UTC</span></label><select id="date-scope"><option value="single">单日查询</option><option value="range">时间段查询</option></select><small id="date-hint">可查询过去 45 天。</small></div></div>
+          <div id="single-date" class="field"><label for="date">报表日期 <span class="label-note">UTC</span></label><input id="date" type="date" required></div>
+          <div id="range-date" class="two-columns" hidden><div class="field"><label for="start-date">开始日期 <span class="label-note">UTC</span></label><input id="start-date" type="date"></div><div class="field"><label for="end-date">结束日期 <span class="label-note">UTC</span></label><input id="end-date" type="date"><small>含开始和结束当天，最多 45 天。</small></div></div>
+          <fieldset><legend>报表类型</legend><div class="report-types"><label class="report-option summary-option"><input type="radio" name="mode" value="summary" checked><span><strong>展示与收益汇总</strong><small>直接查看各广告类型的次数、收益和逐日数据</small></span></label><label class="report-option"><input type="radio" name="mode" value="users"><span><strong>按用户汇总</strong><small>下载每位用户的展示次数与收入</small></span></label><label class="report-option"><input type="radio" name="mode" value="impressions"><span><strong>逐次展示明细</strong><small>每次广告展示一行记录</small></span></label></div></fieldset>
+          <div id="readiness" class="date-warning" hidden></div>
+          <button type="submit" id="submit" class="primary"><span id="submit-label">查询报表</span><span aria-hidden="true" id="submit-icon">↗</span></button>
+          <button type="button" id="stop-query" class="secondary stop-query" hidden>停止查询</button>
+          <p class="form-footnote">通过本机服务连接 AppLovin 官方报表接口</p>
+        </form>
+      </section>
+      <aside>
+        <section class="result-card" aria-labelledby="result-heading"><div class="card-heading"><div><span class="step">02</span><h2 id="result-heading">查询结果</h2></div><span id="status-badge" class="status-badge">等待查询</span></div>
+          <div id="empty-state" class="empty-state"><div class="file-icon" aria-hidden="true"><span>CSV</span></div><h3>你的报表将在这里就绪</h3><p>填写左侧条件并查询，<br>获取报表后即可下载。</p></div>
+          <div id="loading-state" class="empty-state" hidden><div class="spinner" aria-hidden="true"></div><h3>正在获取报表</h3><p>正在连接 AppLovin，请稍候…</p></div>
+          <div id="error-state" class="error-state" role="alert" hidden><span class="error-mark" aria-hidden="true">!</span><h3>本次查询未完成</h3><p id="error-message"></p></div>
+          <div id="success-state" class="success-state" hidden><p class="success-label" id="success-label">报表已就绪</p><h3 id="result-mode"></h3><dl><div><dt>应用</dt><dd id="result-app"></dd></div><div><dt>平台</dt><dd id="result-platform"></dd></div><div><dt>日期（UTC）</dt><dd id="result-date"></dd></div><div><dt>文件格式</dt><dd id="result-format">CSV · 原始报表</dd></div></dl><a id="download" class="download-button" target="_blank" rel="noopener"><span id="download-label">下载 CSV</span><span aria-hidden="true">↓</span></a><p id="download-warning" class="inline-message message-error" hidden></p><p id="download-note" class="download-note">点击下载原始文件，可用 Excel 或 Numbers 打开。链接失效时请重新查询。</p></div>
+          <section id="daily-panel" class="daily-panel" aria-label="逐日查询进度" hidden><div class="daily-heading"><h3>逐日结果</h3><span id="batch-summary" role="status" aria-live="polite"></span></div><progress id="batch-progress" value="0" max="1" aria-label="已处理日期"></progress><div id="daily-results"></div><button id="retry-failed" class="secondary retry-failed" type="button" hidden>重试未成功的日期</button></section>
+          <section id="summary-panel" class="summary-panel" aria-label="展示与收益汇总" hidden>
+            <div class="summary-metrics"><div><span>总展示次数</span><strong id="summary-impressions"></strong></div><div><span>预估收益（USD）</span><strong id="summary-revenue"></strong></div><div><span>eCPM（USD）</span><strong id="summary-ecpm"></strong></div></div>
+            <p id="summary-fullscreen" class="summary-fullscreen"></p>
+            <h3>按广告类型汇总</h3><div class="table-scroll"><table class="summary-table" aria-label="各广告类型汇总"><thead><tr><th>广告类型</th><th>展示次数</th><th>收益（USD）</th><th>eCPM</th></tr></thead><tbody id="summary-types"></tbody><tfoot id="summary-total"></tfoot></table></div>
+            <h3>逐日数据 <span class="label-note">UTC</span></h3><div class="table-scroll daily-table-scroll"><table class="summary-table" aria-label="逐日展示和收益"><thead><tr><th>日期</th><th>类型</th><th>展示次数</th><th>收益（USD）</th><th>eCPM</th></tr></thead><tbody id="summary-days"></tbody></table></div>
+            <p id="summary-empty-days" class="inline-message message-error" hidden></p><p id="summary-as-of" class="download-note"></p>
+            <p class="download-note">展示次数采用 MAX Impressions 口径。eCPM 按收益 ÷ 展示次数 × 1,000 计算；收益保留 6 位小数，页面显示 2 位。无匹配记录的日期不会补成零。</p>
+          </section>
+          <p id="live-status" class="sr-only" role="status" aria-live="polite"></p>
+        </section>
+        <section class="notes"><h3>查询前了解</h3><div><span>01</span><p id="availability-note">汇总报表可查询当天，最近 1–2 小时的数据可能尚未完整，建议对账时选择完整 UTC 日。</p></div><div><span>02</span><p>收入单位为 <strong>美元（USD）</strong>。汇总报表不筛应用版本；用户级报表的用户 ID 取决于应用是否向 MAX 设置了内部标识。</p></div><a id="official-docs" href="https://support.applovin.com/zh/max/reporting-apis/revenue-reporting-api" target="_blank" rel="noopener noreferrer">查看 AppLovin 官方文档 <span aria-hidden="true">↗</span></a></section>
+      </aside>
+    </div>
+  </main>
+  <footer><span>MAX REPORT WORKSPACE</span><span>本机运行 · 钥匙串保存密钥</span></footer>
+</body>
+</html>
