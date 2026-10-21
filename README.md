@@ -1,5 +1,15 @@
 # MAX 收入报表 · 本地工具
 
+## 公网部署
+
+仓库包含 `render.yaml`，可在 Render 使用 Blueprint 部署免费 Python Web Service。也可从公开仓库创建 Web Service：分支 `codex/initial-import`，构建命令 `pip install -r requirements.txt`，启动命令 `python server.py --cloud`，健康检查 `/health`，选择 Free 方案与 Singapore 区域。设置仅服务端可见的 `MAX_COOKIE_SECRET`（至少 32 个随机字符，保持不变）；Render 自动提供 `PORT` 和 `RENDER_EXTERNAL_HOSTNAME`。其他平台还需显式设置 `MAX_PUBLIC_HOST` 并使用 HTTPS 反向代理。
+
+公网版的账号按浏览器隔离。Report Key 与应用记录通过认证加密后保存为 Secure、HttpOnly、SameSite Cookie，不回传 Key 原文给页面，不建立公共账号列表；查询时云端服务会解密并向 AppLovin 发送 Key。每个浏览器首次使用需自行输入，Mac 钥匙串的已有账号不会迁移到云端。Cookie 最多保留一年，清除 Cookie、换浏览器或更换服务加密密钥后需重新保存；保存容量受 Cookie 限制，满时可临时输入 Key。不要导出或分享 Cookie。
+
+下载记录同样校验浏览器归属，内存保留最多两小时；服务休眠重启或重新部署后旧下载链接失效，重新查询即可。免费 Render 服务闲置 15 分钟会休眠，首次再次访问可能需要约一分钟唤醒。公网地址提供通用查询入口，不共享任何用户已有账号和报表。未设置云端启动参数时仍使用原本 Mac 本机模式，且不需要安装云端依赖。
+
+## 本机运行
+
 双击本目录的 `start.command`，浏览器会自动打开 <http://127.0.0.1:8766>。保留启动窗口；关闭窗口或按 Control+C 停止服务。再次双击会打开已有服务。需要 macOS 自带或已安装的 Python 3，无需安装第三方依赖。
 
 1. 首次输入 AppLovin **Report Key**（不是 SDK Key），填写账号名称，点击「保存并使用」。之后直接下拉选择，可保存多个账号。也可临时输入 Key 查询而不保存。

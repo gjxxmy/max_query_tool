@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: max-query-tool
+    runtime: python
+    plan: free
+    region: singapore
+    repo: https://github.com/gjxxmy/max_query_tool
+    branch: codex/initial-import
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py --cloud
+    healthCheckPath: /health
+    envVars:
+      - key: MAX_COOKIE_SECRET
+        generateValue: true

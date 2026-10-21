@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Local MAX report client. Keys can be saved in the macOS Keychain."""
 import argparse
+import contextvars
 import datetime as dt
 import http.server
 import http.client
 import json
+import os
 import re
 import secrets
 import shutil
@@ -26,6 +28,19 @@ REPORT_TTL = 2 * 60 * 60
 REPORTS = {}
 BUNDLES = {}
 LOCK = threading.Lock()
+REQUEST_PREFERENCES = contextvars.ContextVar("request_preferences", default=None)
+
+
+def current_preferences():
+    return REQUEST_PREFERENCES.get() or preferences
+
+
+def current_owner():
+    return getattr(current_preferences(), "owner", "")
+
+
+def owns(record):
+    return record.get("owner", "") == current_owner()
 
 
 class ReportError(Exception):
@@ -35,7 +50,7 @@ class ReportError(Exception):
 def validate_identity(data):
     if not isinstance(data, dict):
         raise ReportError("请求格式不正确。")
-    key = (preferences.key_for(data["profile_id"]) if data.get("profile_id") else
+    key = (current_preferences().key_for(data["profile_id"]) if data.get("profile_id") else
            str(data.get("api_key", "")).strip())
     if not key or len(key) > 4096 or any(c.isspace() for c in key):
         raise ReportError("请填写有效的 Report Key（不是 SDK Key）。")
@@ -138,15 +153,15 @@ def query_report(data):
             del REPORTS[old]
         if len(REPORTS) >= 100:
             del REPORTS[next(iter(REPORTS))]
-        REPORTS[token] = {"url": url, "filename": filename, "expires": now + REPORT_TTL,
+        REPORTS[token] = {"url": url, "filename": filename, "expires": now + REPORT_TTL, "owner": current_owner(),
                          "date": params["date"], "platform": params["platform"],
                          "identifier": identifier, "aggregated": params["aggregated"]}
     # Remember the actual platform only after the official query succeeds.
     warning = ""
     try:
-        preferences.remember_query(params, data.get("profile_id", ""))
+        current_preferences().remember_query(params, data.get("profile_id", ""))
     except PreferencesError:
-        warning = "报表已就绪，但未能记住本次应用；请检查本机设置目录权限。"
+        warning = "报表已就绪，但未能记住本次应用；请检查设置容量或保存权限。"
     return {"download_url": f"/download/{token}", "filename": filename,
             "date": params["date"], "platform": params["platform"],
             "identifier": identifier, "aggregated": params["aggregated"] == "true",
@@ -199,11 +214,11 @@ def query_summary(data):
             del REPORTS[old]
         if len(REPORTS) >= 100:
             del REPORTS[next(iter(REPORTS))]
-        REPORTS[token] = {"csv": csv_data, "filename": filename, "expires": now + REPORT_TTL}
+        REPORTS[token] = {"csv": csv_data, "filename": filename, "expires": now + REPORT_TTL, "owner": current_owner()}
     warning = ""
     try:
         if result["rows"]:
-            preferences.remember_query(identity, data.get("profile_id", ""))
+            current_preferences().remember_query(identity, data.get("profile_id", ""))
     except PreferencesError:
         warning = "汇总已就绪，但未能记住本次应用。"
     return dict(result, identifier=identifier, platform=identity["platform"],
@@ -228,7 +243,7 @@ def register_bundle(data):
                 if not isinstance(link, str) or not re.fullmatch(r"/download/[A-Za-z0-9_-]{43}", link):
                     raise ReportError("下载记录无效，请重新查询。")
                 report = REPORTS.get(link.rsplit("/", 1)[-1])
-                if not report or report["expires"] < now:
+                if not report or not owns(report) or report["expires"] < now:
                     raise ReportError("部分下载记录已过期，请重新查询该日期范围。")
                 if "url" not in report:
                     raise ReportError("汇总报表请直接下载 CSV，无需逐日打包。")
@@ -253,7 +268,7 @@ def register_bundle(data):
             del BUNDLES[next(iter(BUNDLES))]
         token = secrets.token_urlsafe(32)
         BUNDLES[token] = {"records": records, "filename": filename,
-                         "expires": now + REPORT_TTL}
+                         "expires": now + REPORT_TTL, "owner": current_owner()}
     return {"download_url": f"/bundle/{token}", "filename": filename,
             "start_date": days[0], "end_date": days[-1],
             "identifier": identifier, "platform": platform,
@@ -303,6 +318,19 @@ def write_bundle(bundle, destination):
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "LocalMAX/1.0"
 
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(75)
+
+    def handle_one_request(self):
+        # Each request thread receives its own browser's credentials and owner.
+        self.workspace = None
+        token = REQUEST_PREFERENCES.set(None)
+        try:
+            super().handle_one_request()
+        finally:
+            REQUEST_PREFERENCES.reset(token)
+
     def log_message(self, *args):
         # Never print request URLs, keys, upstream errors or signed report links.
         pass
@@ -314,6 +342,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Frame-Options", "DENY")
+        if getattr(self.server, "cloud", False):
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+            if self.workspace is not None and self.workspace.dirty:
+                self.send_header("Set-Cookie", self.workspace.cookie())
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
         if length is not None:
             self.send_header("Content-Length", str(length))
@@ -326,20 +358,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def local_request(self, mutation=False):
         port = self.server.server_address[1]
-        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        cloud = getattr(self.server, "cloud", False)
+        allowed = ({self.server.public_host} if cloud else {f"127.0.0.1:{port}", f"localhost:{port}"})
         if self.headers.get("Host") not in allowed:
-            self.send_json(403, {"error": "仅支持本机访问。"})
+            self.send_json(403, {"error": "访问域名不受支持。"})
             return False
         origin = self.headers.get("Origin")
-        if origin and origin not in {"http://" + host for host in allowed}:
-            self.send_json(403, {"error": "请求来源不受支持，请从本地页面操作。"})
+        if origin and origin not in {("https://" if cloud else "http://") + host for host in allowed}:
+            self.send_json(403, {"error": "请求来源不受支持，请从工具页面操作。"})
             return False
-        if self.headers.get("Sec-Fetch-Site") == "cross-site":
+        public_navigation = (cloud and not mutation and self.command == "GET"
+            and self.path == "/" and self.headers.get("Sec-Fetch-Mode") == "navigate")
+        if self.headers.get("Sec-Fetch-Site") == "cross-site" and not public_navigation:
             self.send_json(403, {"error": "不允许跨站请求。"})
             return False
         if mutation and self.headers.get_content_type() != "application/json":
             self.send_json(415, {"error": "请求格式须为 JSON。"})
             return False
+        if cloud:
+            from cloud import CloudPreferences
+            self.workspace = CloudPreferences(self.server.cookie_cipher, self.headers.get("Cookie", ""))
+            REQUEST_PREFERENCES.set(self.workspace)
         return True
 
     def do_GET(self):
@@ -359,7 +398,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True, "app": "max-revenue-report"})
         elif path == "/api/preferences":
             try:
-                self.send_json(200, preferences.public())
+                self.send_json(200, current_preferences().public())
             except PreferencesError as exc:
                 self.send_json(400, {"error": str(exc)})
         elif path.startswith("/download/"):
@@ -372,7 +411,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def download(self, token):
         with LOCK:
             report = REPORTS.get(token)
-        if not report or report["expires"] < time.monotonic():
+        if not report or not owns(report) or report["expires"] < time.monotonic():
             self.send_download_error("下载记录已过期，请回到工具重新查询。")
             return
         if "csv" in report:
@@ -409,7 +448,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def download_bundle(self, token):
         with LOCK:
             bundle = BUNDLES.get(token)
-        if not bundle or bundle["expires"] < time.monotonic():
+        if not bundle or not owns(bundle) or bundle["expires"] < time.monotonic():
             self.send_download_error("打包记录已过期，请回到工具重新查询。")
             return
         self.headers_for(200, "application/zip")
@@ -444,7 +483,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ReportError("请求格式不正确。")
             if self.path == "/api/profiles":
-                result = preferences.save_profile(data.get("name"), data.get("api_key"))
+                result = current_preferences().save_profile(data.get("name"), data.get("api_key"))
             elif self.path == "/api/bundle":
                 result = register_bundle(data)
             elif self.path == "/api/summary":
@@ -462,27 +501,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--cloud", action="store_true", help="Hosted HTTPS reverse-proxy mode")
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args()
+    port = args.port or (int(os.environ.get("PORT", "10000")) if args.cloud else 8766)
+    if args.cloud:
+        public_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME") or os.environ.get("MAX_PUBLIC_HOST", "")
+        if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?", public_host):
+            raise SystemExit("Set RENDER_EXTERNAL_HOSTNAME or MAX_PUBLIC_HOST to the public HTTPS hostname.")
+        from cloud import make_cipher
+        cipher = make_cipher(os.environ.get("MAX_COOKIE_SECRET", ""))
     try:
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = http.server.ThreadingHTTPServer(("0.0.0.0" if args.cloud else "127.0.0.1", port), Handler)
     except OSError:
+        if args.cloud:
+            raise
         # Double-clicking twice opens the existing instance, not another service.
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{args.port}/health", timeout=2) as r:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as r:
                 ours = json.load(r).get("app") == "max-revenue-report"
         except Exception:
             ours = False
         if not ours:
-            raise SystemExit(f"端口 {args.port} 已占用，可用 --port 指定其他端口。")
+            raise SystemExit(f"端口 {port} 已占用，可用 --port 指定其他端口。")
         if args.open:
             import webbrowser
-            webbrowser.open(f"http://127.0.0.1:{args.port}")
+            webbrowser.open(f"http://127.0.0.1:{port}")
         return
-    url = f"http://127.0.0.1:{server.server_address[1]}"
+    server.cloud = args.cloud
+    if args.cloud:
+        server.public_host = public_host
+        server.cookie_cipher = cipher
+    url = f"https://{public_host}" if args.cloud else f"http://127.0.0.1:{server.server_address[1]}"
     print(f"MAX 收入报表工具：{url}", flush=True)
-    print("仅本机可访问。关闭此窗口或按 Control+C 停止；保存的 Report Key 存于 Mac 钥匙串。", flush=True)
+    print("云端模式：各浏览器使用独立的加密账号 Cookie。" if args.cloud else
+          "仅本机可访问。关闭此窗口或按 Control+C 停止；保存的 Report Key 存于 Mac 钥匙串。", flush=True)
     if args.open:
         import webbrowser
         webbrowser.open(url)

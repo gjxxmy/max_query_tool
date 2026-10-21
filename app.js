@@ -85,11 +85,18 @@ function updateKeyEditor() {
     $('toggle-key').setAttribute('aria-pressed', 'false');
     $('toggle-key').setAttribute('aria-label', '显示 Report Key');
   }
-  $('key-hint').textContent = saved ? '使用 Mac 钥匙串中保存的 Key，无需再次输入；页面不会读取密钥原文。' : '填写一次并保存，之后直接选择。密钥保存到这台 Mac 的钥匙串。';
+  const cloud = preferencesState.storage === 'encrypted-cookie';
+  $('key-hint').textContent = cloud ?
+    (saved ? '使用此浏览器已保存的账号。Key 以加密 Cookie 保存，页面不会读取密钥原文。' : '填写一次并保存，之后直接选择。账号仅在此浏览器中记住，不与其他访问者共享。') :
+    (saved ? '使用 Mac 钥匙串中保存的 Key，无需再次输入；页面不会读取密钥原文。' : '填写一次并保存，之后直接选择。密钥保存到这台 Mac 的钥匙串。');
 }
 
 function renderPreferences(state, selected) {
   preferencesState = state;
+  const cloud = state.storage === 'encrypted-cookie';
+  document.querySelector('.local-badge').lastChild.textContent = cloud ? ' 在线工具' : ' 本地工具';
+  document.querySelector('.form-footnote').textContent = cloud ? '通过 HTTPS 连接报表服务，再查询 AppLovin 官方接口' : '通过本机服务连接 AppLovin 官方报表接口';
+  document.querySelector('footer span:last-child').textContent = cloud ? '在线查询 · 各浏览器独立保存账号' : '本机运行 · 钥匙串保存密钥';
   $('key-profile').replaceChildren();
   for (const profile of state.profiles) {
     const option = document.createElement('option');
@@ -113,7 +120,7 @@ function renderPreferences(state, selected) {
 async function localJSON(path, data) {
   const response = await fetch(path, data === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || '本机设置操作未完成。');
+  if (!response.ok) throw new Error(value.error || '设置操作未完成。');
   return value;
 }
 
@@ -127,7 +134,7 @@ async function loadPreferences() {
     $('key-profile').disabled = false;
     $('key-profile').replaceChildren(new Option('临时输入 Report Key', ''));
     updateKeyEditor();
-    message('已保存的设置读取失败。请确认本地服务已更新并重启；仍可临时输入 Key 查询。', true);
+    message('已保存的设置读取失败，请刷新后重试；仍可临时输入 Key 查询。', true);
   }
 }
 
@@ -142,9 +149,9 @@ $('save-key').addEventListener('click', async () => {
     const state = await localJSON('/api/profiles', {name: $('profile-name').value.trim(), api_key: $('api-key').value.trim()});
     renderPreferences(state, state.last_profile);
     $('profile-name').value = '';
-    message('已保存到 Mac 钥匙串。以后打开直接选择，无需重新输入。');
+    message(preferencesState.storage === 'encrypted-cookie' ? '已为此浏览器加密保存。以后打开直接选择；清除 Cookie 或换浏览器后需重新输入。' : '已保存到 Mac 钥匙串。以后打开直接选择，无需重新输入。');
   } catch (error) {
-    message(error instanceof TypeError ? '无法连接本地服务，请重启工具。' : error.message, true);
+    message(error instanceof TypeError ? '无法连接报表服务，请稍后重试。' : error.message, true);
   } finally {
     $('save-key').disabled = false;
     $('key-profile').disabled = false;
@@ -209,7 +216,7 @@ function renderDaily(context) {
 
 function errorText(error) {
   if (error.name === 'AbortError') return stopRequested ? '已停止查询。' : '查询超时，请检查网络后重试。';
-  return error instanceof TypeError ? '无法连接本地服务，请确认启动窗口仍在运行。' : error.message;
+  return error instanceof TypeError ? '无法连接报表服务，请稍后重试。' : error.message;
 }
 
 async function fetchReport(path, data) {
@@ -219,7 +226,7 @@ async function fetchReport(path, data) {
     const response = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
       signal: activeController.signal, body: JSON.stringify(data)});
     let result;
-    try { result = await response.json(); } catch { throw new Error('本地服务响应异常，请重新启动工具后重试。'); }
+    try { result = await response.json(); } catch { throw new Error('报表服务响应异常，请稍后刷新重试。'); }
     if (!response.ok) throw new Error(result.error || '查询失败，请稍后重试。');
     return result;
   } finally {
